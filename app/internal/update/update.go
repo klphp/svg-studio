@@ -22,6 +22,8 @@ import (
 	"log/slog"
 	"net"
 	"net/url"
+	"os"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"time"
@@ -126,6 +128,11 @@ type Manager struct {
 	currentVersion string
 	fallbackURL    string
 
+	// prov 是 Setup 构造出来的 provider。macOS 上不用 Wails 的
+	// DownloadAndInstall（见 Install 的注释），改由我们自己下载安装包，
+	// 所以要把 provider 留着，用它的 Download 把字节流出来。
+	prov updater.Provider
+
 	mu   sync.Mutex
 	last *Result
 }
@@ -174,6 +181,8 @@ func (m *Manager) Setup() error {
 	if err != nil {
 		return fmt.Errorf("update: 构造 provider 失败: %w", err)
 	}
+
+	m.prov = prov
 
 	ucfg := updater.Config{
 		CurrentVersion: m.currentVersion,
@@ -301,7 +310,85 @@ func (m *Manager) Install(ctx context.Context) error {
 		return m.app.Updater.Restart(ctx)
 	}
 
-	return m.openDownloadPage()
+	return m.installDarwin(ctx)
+}
+
+// installDarwin 是 macOS 的「半自动」更新：程序负责下载，用户只负责拖一下。
+//
+// 为什么不能全自动：替换 Contents/MacOS 里的二进制会让
+// _CodeSignature/CodeResources 的哈希对不上，签名失效，macOS 立刻弹出
+// 「隐私与安全」要求手动点「仍要打开」。重新 ad-hoc 签名也救不了 ——
+// 签名内容变了，Gatekeeper 当成另一个未信任程序，照样拦。根因是没有
+// Apple 开发者 ID 和公证，系统不允许未公证的应用静默替换自身。
+//
+// 所以退一步：把 dmg 下到「下载」目录并直接打开。dmg 里有指向
+// /Applications 的符号链接，用户把 app 拖上去、点「替换」就完事。
+// 新 app 的签名在包里是完好的，不会触发任何弹窗。
+//
+// 下载位置刻意选 ~/Downloads 而不是缓存目录 —— 用户得能看见这个文件，
+// 拖完之后自己知道该删掉它。缓存目录里躺个 7MB 的 dmg 反而让人困惑。
+func (m *Manager) installDarwin(ctx context.Context) error {
+	if m.prov == nil {
+		slog.Warn("没有 provider，回退到打开下载页")
+		return m.openDownloadPage()
+	}
+
+	rel, err := m.app.Updater.Check(ctx) // 拿到带 Artifact 的 Release
+	if err != nil || rel == nil {
+		slog.Warn("取不到 release 信息，回退到打开下载页", "err", err)
+		return m.openDownloadPage()
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return m.openDownloadPage()
+	}
+	dlDir := filepath.Join(home, "Downloads")
+	if _, err := os.Stat(dlDir); err != nil {
+		return m.openDownloadPage()
+	}
+
+	name := rel.Artifact.Filename
+	if name == "" {
+		return m.openDownloadPage()
+	}
+	dst := filepath.Join(dlDir, name)
+
+	// 已经下过就别重复下（用户可能点了两次「立即更新」）
+	if _, err := os.Stat(dst); err == nil {
+		slog.Info("安装包已存在，直接打开", "path", dst)
+		return m.revealAndOpen(dst)
+	}
+
+	f, err := os.Create(dst)
+	if err != nil {
+		return m.openDownloadPage()
+	}
+	slog.Info("开始下载更新包", "path", dst, "size", rel.Artifact.Size)
+
+	if err := m.prov.Download(ctx, rel, f, func(w, total int64) {}); err != nil {
+		f.Close()
+		os.Remove(dst) // 半截文件留着没意义
+		if isNetworkError(err) {
+			return ErrNetwork
+		}
+		slog.Warn("下载失败，回退到打开下载页", "err", err)
+		return m.openDownloadPage()
+	}
+	f.Close()
+
+	slog.Info("下载完成", "path", dst)
+	return m.revealAndOpen(dst)
+}
+
+// revealAndOpen 打开安装包。dmg 会直接挂载出窗口，里面就有指向
+// /Applications 的快捷方式，用户拖一下即可。
+func (m *Manager) revealAndOpen(path string) error {
+	if err := m.app.Browser.OpenURL("file://" + path); err != nil {
+		slog.Warn("打开安装包失败", "err", err, "path", path)
+		return m.openDownloadPage()
+	}
+	return nil
 }
 
 // openDownloadPage 在自动安装走不通时，打开 release 页面让用户自己下载。
