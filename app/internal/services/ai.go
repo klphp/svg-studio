@@ -90,7 +90,10 @@ func (s *AIService) ChatCompletion(baseURL, apiKey string, bodyJSON string) (str
 	// opencode 需要这个才能路由；别的服务商会忽略未知头。
 	req.Header.Set("x-opencode-session", s.sessionID)
 
-	slog.Debug("proxy request", "endpoint", endpoint, "bytes", len(bodyJSON))
+	// 用 Info 而不是 Debug：默认日志级别是 Info，写 Debug 等于不留痕。
+	// 排查「保存了 key 但不好使」这类问题，得先能确认请求到底发出去没有、
+	// 打到哪个地址、服务端回了什么码。
+	slog.Info("AI 请求", "endpoint", endpoint, "bytes", len(bodyJSON))
 
 	resp, err := s.client.Do(req)
 	if err != nil {
@@ -106,6 +109,12 @@ func (s *AIService) ChatCompletion(baseURL, apiKey string, bodyJSON string) (str
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return string(raw), nil
 	}
+
+	slog.Warn("AI 请求失败",
+		"endpoint", endpoint,
+		"status", resp.StatusCode,
+		"body", truncateForLog(string(raw), 300),
+	)
 
 	return "", &ErrorInfo{
 		Status:  resp.StatusCode,
@@ -157,4 +166,12 @@ func extractServerMessage(raw []byte, statusLine string) string {
 		return text
 	}
 	return statusLine
+}
+
+// truncateForLog 防止把整个响应体刷进日志。服务端报错时前几百字节就够了。
+func truncateForLog(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "...(截断)"
 }
