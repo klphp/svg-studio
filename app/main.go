@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -66,6 +67,55 @@ func setupLogging() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(w, nil)))
 }
 
+// cleanupUpdateLeftovers 清掉自更新在可执行文件旁边留下的残留。
+//
+// Wails 的 Windows 更新走 rename-aside：先把正在运行的 exe 改名成
+// svg-studio.exe.old.<纳秒时间戳>，再把新 exe 放进去，重启后由 helper 删掉。
+// 实测 helper 常常没能删成（文件还映射着），于是用户下次打开软件就会看到
+// 目录里凭空多出一个 .old.* 文件 —— 观感很差，像是被什么远程东西动过。
+//
+// Wails 自己也有 sweepRenameAsides()，但它只在「下一次更新时」才扫，正常
+// 使用下几个月都不会触发。所以这里启动时主动扫一次。
+//
+// staging 目录（wails-update-*）同理：它是下载时建在 exe 同目录的临时目录，
+// 因为 os.Rename 不能跨文件系统，这个位置是 Wails 的硬约束挪不走，只能扫掉。
+//
+// 全部 best-effort：删不掉（还占着）就放过，下次启动再试。绝不能因为清理
+// 失败影响启动。
+func cleanupUpdateLeftovers() {
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	// 解析符号链接，拿到真实路径（有些启动方式下 os.Executable 给的是链接）
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
+	}
+
+	// .old.* 兄弟文件
+	if matches, err := filepath.Glob(exe + ".old.*"); err == nil {
+		for _, m := range matches {
+			if os.Remove(m) == nil {
+				slog.Info("清理上次更新的残留", "path", filepath.Base(m))
+			}
+		}
+	}
+
+	// wails-update-* staging 目录
+	dir := filepath.Dir(exe)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() && strings.HasPrefix(e.Name(), "wails-update-") {
+			if os.RemoveAll(filepath.Join(dir, e.Name())) == nil {
+				slog.Info("清理更新临时目录", "path", e.Name())
+			}
+		}
+	}
+}
+
 func init() {
 	// Register a custom event whose associated data type is string.
 	// This is not required, but the binding generator will pick up registered events
@@ -78,6 +128,7 @@ func init() {
 // logs any error that might occur.
 func main() {
 	setupLogging()
+	cleanupUpdateLeftovers()
 
 	// Create a new Wails application by providing the necessary options.
 	// Variables 'Name' and 'Description' are for application metadata.
