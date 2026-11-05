@@ -117,10 +117,25 @@ app/
 3. zip 里**只能有一个顶层条目**：macOS 是 `svg-studio.app/`，Windows 是 `svg-studio.exe`
 4. 发 release，tag 形如 `v0.0.1`
 
-## 致谢
-
-界面与交互源自 [SVG-ORA-Studio](https://github.com/seeb4coding/SVG-ORA-Studio)（Apache-2.0），在其基础上加了 Go 桌面壳、中英双语、应用图标和自更新。
-
 ## 许可
 
-Apache-2.0
+[MIT](./LICENSE)。
+
+本项目的界面与交互源自 [SVG-ORA-Studio](https://github.com/seeb4coding/SVG-ORA-Studio)，
+原作者 seeb4coding，以 MIT 协议发布。MIT 允许修改、分发与再授权，因此在其基础上
+套 Go 桌面壳、做中英双语、换应用图标、加自更新都是允许的，只要保留原版权声明
+和许可证（已保留在本文件的 LICENSE 里）。
+
+**关于源码文件头的一处不一致**：上游源码每个文件的开头写着
+`SPDX-License-Identifier: Apache-2.0`，而仓库根目录的 `LICENSE` 是 MIT。这是
+Google AI Studio 导出代码时自动加的模板头，与仓库的实际协议冲突。本项目以
+仓库根的 `LICENSE`（MIT）为准；文件头的原始声明按原样保留，不做改动 ——
+修改他人的版权声明本身就不合适。
+
+### 相对上游的改动
+
+- 增加 Go + Wails3 桌面壳（原生窗口、应用图标、自更新、日志落盘）
+- 界面中英双语（126 处文案，新增 `src/i18n/`）
+- 修正上游在桌面环境下的若干问题：frameless 窗口红绿灯遮挡、严格 TS
+  模式下编译不过的类型推断、WebView 里不存在的 `process.env`
+- 删除 `components/Header.tsx`（上游从未引用的死代码）与模板占位元数据

@@ -36,6 +36,44 @@ const updateRepo = "klphp/svg-studio"
 //go:embed all:frontend/dist
 var assets embed.FS
 
+// licenseText 是 MIT 许可证全文，嵌进二进制。
+//
+// 为什么要嵌：MIT 的原文要求「版权声明和许可证须包含在软件的所有副本或
+// 实质性部分中」。我们的分发形态是两个单文件，
+//   · Windows 是裸 exe 打包成 zip，而 Wails 的 updater 要求 zip 里只能有
+//     一个顶层条目 —— 塞不进多余的 LICENSE 文件
+//   · macOS 是 .app bundle，可以放进 Contents/Resources
+// 所以最稳妥的做法是让许可证成为二进制的一部分，任何一份拷贝都自带它。
+// macOS 那边还会额外在打包时往 Contents/Resources 放一份，
+// 这样用户右键「显示包内容」能直接看到。
+//
+//go:embed LICENSE
+var licenseText string
+
+// ensureLicenseFile 把许可证写到用户配置目录，已存在则跳过。
+//
+// 光 embed 不够：如果没人读这个变量，Go 的 linker 会把整个字符串优化掉
+// （实测 strings 搜不到 MIT 正文）。而 MIT 要求许可证随副本分发，所以
+// 把它落成用户目录下的一个真实文件 —— 既保证内容真在程序里，用户也能
+// 直接打开看。macOS 打包时还会另外往 Contents/Resources 放一份。
+func ensureLicenseFile() {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return
+	}
+	appDir := filepath.Join(dir, "svg-studio")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		return
+	}
+	path := filepath.Join(appDir, "LICENSE")
+	if _, err := os.Stat(path); err == nil {
+		return // 已经有就跳过，别每次启动都写
+	}
+	if err := os.WriteFile(path, []byte(licenseText), 0o644); err != nil {
+		slog.Warn("写许可证文件失败", "err", err)
+	}
+}
+
 // setupLogging 把 log 和 slog 同时写到 stderr 和日志文件。
 //
 // 为什么必须要文件：Windows 构建用 -ldflags="-H windowsgui"，进程没有控制台，
@@ -138,6 +176,7 @@ func cleanupUpdateLeftovers() {
 func main() {
 	setupLogging()
 	cleanupUpdateLeftovers()
+	ensureLicenseFile()
 
 	// Create a new Wails application by providing the necessary options.
 	// Variables 'Name' and 'Description' are for application metadata.
