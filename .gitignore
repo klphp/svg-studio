@@ -1,0 +1,33 @@
+# ── 系统 ──
+.DS_Store
+
+# ── Node ──
+node_modules/
+dist/
+*.log
+npm-debug.log*
+
+# ── 环境变量 / 密钥 ──
+.env
+.env.local
+.env.*.local
+
+# ── 构建产物 ──
+bin/
+build/bin/
+*.exe
+*.app/
+*.dmg
+
+# ── 编辑器 ──
+.vscode/
+.idea/
+
+# ── Wails（后续接入时）──
+frontend/dist/
+frontend/node_modules/
+frontend/bindings/
+
+# ── 内部笔记（不公开）──
+.local-notes/
+PLAN.md

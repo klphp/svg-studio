@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SVG Studio</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            animation: {
+              'fade-in': 'fadeIn 0.5s ease-out',
+            },
+            keyframes: {
+              fadeIn: {
+                '0%': { opacity: '0', transform: 'translateY(10px)' },
+                '100%': { opacity: '1', transform: 'translateY(0)' },
+              }
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+      /*
+       * 字体渲染。这几条不是"锦上添花"，在这台机器上是必需的。
+       *
+       * 屏幕逻辑分辨率是 1:1（不是 2x Retina）。Tailwind 的 `antialiased`
+       * class 等价于 -webkit-font-smoothing: antialiased，会把字体从次像素
+       * 渲染切到灰度渲染 —— 在 2x 屏上更精致，在 1:1 屏上中文字会明显发虚。
+       * 所以这里反过来：显式要求 subpixel-antialiased。
+       *
+       * 字体栈里 Inter 排第一（上游就是拿它设计的），但 Inter 不含中文字形，
+       * 中文会回退到后面几个 —— 必须写清楚，否则可能落到某个奇怪的后备字体上。
+       */
+      html, body {
+        -webkit-font-smoothing: subpixel-antialiased;
+        -moz-osx-font-smoothing: auto;
+        text-rendering: optimizeLegibility;
+      }
+
+      /*
+       * 整体放大 15%。
+       *
+       * 这才是中文发虚的真正原因：上游满屏 text-[10px]，10px 的中文字形
+       * 在 1:1 逻辑分辨率的屏上必然糊（英文 10px 勉强能看，中文笔画密得多）。
+       *
+       * 为什么不用调字号：Tailwind 的字号全是固定 px（text-xs = 12px），
+       * 改 root font-size 一点用都没有。zoom 是唯一一处改动能整体生效的。
+       *
+       * 关于 -webkit-font-smoothing: subpixel-antialiased 上面那条：
+       * 在 macOS 的 WKWebView 里它实际上**不起作用** —— macOS 从 10.14
+       * 起在系统层禁用了次像素抗锯齿，Safari/WKWebView 一律只做灰度
+       * 抗锯齿。留着是因为 Windows 的 WebView2 认这条，那边仍有效果。
+       * 截图验证过：中文没有红蓝色边，证明次像素确实没开起来。
+       */
+      body {
+        zoom: 1.15;
+      }
+      body {
+        /*
+         * 上游把 Inter-Medium.ttf 放进了 public/，但整个项目里没有任何
+         * @font-face 声明它 —— 等于从来没加载过，一直在用系统字体。
+         * 所以这里不写 Inter，直接给系统栈，语义更诚实。
+         * 真要内置 Inter 就得配 @font-face + 打包体积 +80KB，暂不需要。
+         */
+        font-family: -apple-system, BlinkMacSystemFont, "PingFang SC",
+                     "Hiragino Sans GB", "Microsoft YaHei", "Source Han Sans SC",
+                     "Noto Sans CJK SC", sans-serif;
+      }
+
+      /* Custom scrollbar for a cleaner look */
+      ::-webkit-scrollbar { width: 8px; }
+      ::-webkit-scrollbar-track { background: #09090b; }
+      ::-webkit-scrollbar-thumb { background: #27272a; border-radius: 4px; }
+      ::-webkit-scrollbar-thumb:hover { background: #3f3f46; }
+    </style>
+  </head>
+  <body class="bg-zinc-950">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
+<!--
+  第一版求快，Tailwind 保留上游的 CDN 方式（cdn.tailwindcss.com）。
+
+  代价说清楚：**断网时没有任何样式**（CDN 加载不到）。功能不受影响，
+  只是界面变成裸 HTML。要离线也正常，把 Tailwind 改成 npm 依赖 +
+  PostCSS 即可（v3 语法，配置从上面那段内联 script 搬出来）。
+
+  已经去掉的：上游的 <script type="importmap">。它把 react / @google/genai
+  指向 aistudiocdn.com，是 Google AI Studio 的运行时方案；Vite 构建时
+  走 package.json 的 npm 依赖，importmap 完全用不上。
+
+  入口路径从 /index.tsx 改成了 /src/main.tsx（Wails 模板的目录结构）。
+-->

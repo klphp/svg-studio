@@ -1,0 +1,17 @@
+{
+	"fixed": {
+		"file_version": "0.0.1",
+		"product_version": "0.0.1"
+	},
+	"info": {
+		"0409": {
+			"FileVersion": "0.0.1",
+			"ProductVersion": "0.0.1",
+			"CompanyName": "klphp",
+			"FileDescription": "SVG Studio - local AI SVG generator",
+			"LegalCopyright": "© 2026 klphp",
+			"ProductName": "SVG Studio",
+			"Comments": "AI 驱动的 SVG 生成与编辑器"
+		}
+	}
+}

@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=My Product
+Comment=SVG Studio - local AI SVG generator
+# The Exec line includes %u to pass the URL to the application
+Exec=/usr/local/bin/svg-studio %u
+Terminal=false
+Type=Application
+Icon=svg-studio
+Categories=Utility;
+StartupWMClass=svg-studio
+
+ 

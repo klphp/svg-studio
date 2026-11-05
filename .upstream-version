@@ -1,0 +1,18 @@
+# 上游快照版本
+
+- repo:   https://github.com/seeb4coding/SVG-ORA-Studio
+- commit: 45ad016b52a236b631a320a6dde3bc400c2cd9ad
+- date:   2026-10-08 10:40:25 +0530
+- 抓取方式: git clone --depth 1，然后删除 upstream/.git
+
+## 为什么要记
+
+upstream/ 里的源码是快照，不带 .git（嵌套仓库会让外层 git 混乱）。
+要对比上游更新时：
+
+```bash
+git clone --depth 1 https://github.com/seeb4coding/SVG-ORA-Studio.git /tmp/upstream-latest
+diff -r upstream /tmp/upstream-latest --exclude=.git
+```
+
+要升级上游：删掉 upstream/，重新 clone，更新本文件的 commit 号。
