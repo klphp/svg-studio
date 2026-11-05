@@ -1,12 +1,12 @@
 {
 	"fixed": {
-		"file_version": "0.0.1",
-		"product_version": "0.0.1"
+		"file_version": "0.0.2",
+		"product_version": "0.0.2"
 	},
 	"info": {
 		"0409": {
-			"FileVersion": "0.0.1",
-			"ProductVersion": "0.0.1",
+			"FileVersion": "0.0.2",
+			"ProductVersion": "0.0.2",
 			"CompanyName": "klphp",
 			"FileDescription": "SVG Studio - local AI SVG generator",
 			"LegalCopyright": "© 2026 klphp",
