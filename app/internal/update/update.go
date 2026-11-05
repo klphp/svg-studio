@@ -25,6 +25,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -68,6 +69,26 @@ type Config struct {
 
 	// App 是应用标识，用于 endpoint 清单里的匹配。
 	App string
+}
+
+// ErrRateLimited 表示被更新源的 API 限流了（GitHub 匿名请求是 60 次/小时）。
+//
+// 这不是故障，也不是「已是最新」—— 它只是「现在查不了」。所以必须和
+// 网络错误、真失败区分开：日志降级成 Debug，用户侧完全静默，下次启动
+// 自然会再查。否则用户会看到一条莫名其妙的「检查更新失败」。
+var ErrRateLimited = errors.New("更新服务限流，稍后自动重试")
+
+// isRateLimited 从错误里认限流。github provider 把 API 的错误体原样包进
+// err 里，形如 "api 403: {"message":"API rate limit exceeded for ..."}"，
+// 所以按文本匹配就够，不必解析 JSON。
+func isRateLimited(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "rate limit") ||
+		strings.Contains(s, "too many requests") ||
+		strings.Contains(s, "api 403")
 }
 
 // ErrNetwork 是「网络不通」的统一出口。
@@ -219,6 +240,10 @@ func (m *Manager) Check(ctx context.Context) (*Result, error) {
 	if err != nil {
 		// 网络不通就到此为止：不上报「无更新」、不提示「已是最新」，
 		// 那种结论在断网时是错的，会让用户以为版本检查成功了。
+		if isRateLimited(err) {
+			slog.Debug("更新源限流，跳过本次检查", "err", err)
+			return nil, ErrRateLimited
+		}
 		if isNetworkError(err) {
 			slog.Debug("检查更新时网络不通", "err", err)
 			return nil, ErrNetwork

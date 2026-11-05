@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"embed"
+	"errors"
 	"io"
 	"log"
 	"log/slog"
@@ -245,6 +246,12 @@ func main() {
 
 		rel, err := updateMgr.Check(ctx)
 		if err != nil {
+			// 限流不算故障：GitHub 匿名 API 只有 60 次/小时，反复调试很容易撞满。
+			// 静默跳过，下次启动自然会再查，没必要打扰用户。
+			if errors.Is(err, update.ErrRateLimited) {
+				slog.Debug("更新源限流，本次跳过")
+				return
+			}
 			slog.Warn("检查更新失败", "err", err)
 			return
 		}
