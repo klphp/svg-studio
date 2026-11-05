@@ -24,7 +24,7 @@ import (
 // 关键：updater 是拿这个值去和最新的 release tag 比大小，所以发版时一定要改
 // 这里。本地调试想看"能不能检测到新版"，就把它改小一版（比如发 0.0.2 的
 // release，这里留 0.0.1），否则永远看不到更新提示。
-const Version = "0.0.8"
+const Version = "0.0.9"
 
 // updateRepo 是自更新的 GitHub 仓库（owner/repo）。
 // 试水方案用 github provider：免费、零服务器、零签名成本。
@@ -366,7 +366,8 @@ func main() {
 		okLabel := "下载并打开"
 		if rel.AutoInstall {
 			message = "更新会自动下载并安装，完成后应用将重启。\n\n" +
-				"未保存的编辑会丢失，建议先把需要的 SVG 导出再更新。"
+				"未保存的编辑会丢失，建议先把需要的 SVG 导出再更新。\n\n" +
+				"安装包约 7 MB，从 GitHub 下载，网络较慢时可能需要几分钟，请耐心等待进度提示。"
 			okLabel = "立即更新"
 		}
 
@@ -393,7 +394,19 @@ func main() {
 		// macOS 不自动装：Wails 的替换流程只认 .zip，不支持 dmg，
 		// 而 dmg 才是 macOS 的分发惯例。这里只提示，让用户自己去下。
 		// Windows 才走自动安装。
-		if err := updateMgr.Install(ctx); err != nil {
+		// Install 必须用独立的、宽松得多的超时。
+		//
+		// 原来直接复用上面那个 20 秒的 ctx —— 那是给 Check 用的，只查一次
+		// GitHub API。而 Install 要下载 6-7MB 的安装包，两者共用一个预算的
+		// 后果是：网络稍慢就 context deadline exceeded，用户看到「点更新没反应」，
+		// 反复收到升级提示。实测日志：
+		//   msg=开始自动更新 currentVersion=0.0.7
+		//   msg=下载更新包失败：网络不通 err="context deadline exceeded"   ← 19 秒
+		// 下载 5 分钟足够覆盖慢速网络；真要更久，用户重试一次即可。
+		installCtx, installCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer installCancel()
+
+		if err := updateMgr.Install(installCtx); err != nil {
 			slog.Warn("安装更新失败", "err", err, "autoInstall", rel.AutoInstall)
 
 			// 必须让用户知道失败了。以前这里只写日志，而 Windows 上日志文件

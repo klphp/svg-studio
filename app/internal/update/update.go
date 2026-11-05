@@ -331,6 +331,14 @@ func (m *Manager) Install(ctx context.Context) error {
 			// 网络不通就到此为止，不重启：否则应用会退出后原地重启，磁盘上
 			// 根本没有可用的新版本，用户还以为升上去了。
 			if isNetworkError(err) {
+				// 区分「超时」和「连不上」：前者通常是网速慢（GitHub 在国内下载
+				// 不稳定，7 MB 的包可能要几分钟），后者是断网或连不通。两种情况
+				// 给用户的建议完全不同，提示不能一样。
+				msg := err.Error()
+				if errors.Is(err, context.DeadlineExceeded) || strings.Contains(msg, "deadline exceeded") {
+					slog.Warn("下载更新包超时", "err", err)
+					return fmt.Errorf("下载超时。安装包约 7 MB，从 GitHub 下载，网络较慢时可稍后重试，或到发布页面手动下载：%s", m.fallbackURL)
+				}
 				slog.Warn("下载更新包失败：网络不通", "err", err)
 				return ErrNetwork
 			}
