@@ -2,7 +2,7 @@
 
 AI 驱动的 SVG 生成与编辑器。描述你想要什么，模型直接吐出一份可编辑的矢量图，然后在内置编辑器里调整图形、图层、变换、滤镜和排版。
 
-内置 Gemini 和 OpenRouter 两种服务商，可切换。
+内置四种服务商：Google Gemini、OpenRouter、opencode zen，以及任何 OpenAI 兼容的自定义端点。
 
 ## 下载
 
@@ -24,8 +24,27 @@ macOS 打开 dmg 后，把 svg-studio 拖到里面的 Applications 快捷方式�
 
 需要自备 API Key。点右上角齿轮，选服务商：
 
-- **Google Gemini** — 到 [Google AI Studio](https://aistudio.google.com/apikey) 申请
-- **OpenRouter** — 到 [OpenRouter](https://openrouter.ai/keys) 申请
+| 服务商 | 申请地址 | 说明 |
+|---|---|---|
+| **Google Gemini** | [AI Studio](https://aistudio.google.com/apikey) | 走官方 SDK |
+| **OpenRouter** | [openrouter.ai/keys](https://openrouter.ai/keys) | 模型有预设列表可选 |
+| **opencode zen** | [opencode.ai](https://opencode.ai/) | 见下方注意事项 |
+| **自定义** | 自己填 Base URL | 任何 OpenAI 兼容端点 |
+
+选择后填 API Key 即可。切到「自定义」时还要填 Base URL 和模型名。
+
+### opencode zen
+
+端点 `https://opencode.ai/zen/go/v1`，默认模型 `deepseek-v4.1-flash`，模型名可以自己改。
+
+需要注意两点：
+
+- 它要求请求带 `x-opencode-session` 头，缺了会返回 `400 MissingSessionID`。本应用已经在 Go 侧自动加上了。
+- 官方定位是**给 coding agent 用**的订阅服务，文档写明会监控「影响其他用户体验的滥用流量」。拿它做非编码类的生成，理论上存在被限流的可能。
+
+### 自定义端点
+
+任何兼容 `/chat/completions` 的服务都能接：DeepSeek 官方、本地 Ollama、自建网关等。填三项就行 —— Base URL（形如 `https://example.com/v1`，末尾不要带斜杠也无妨，程序会处理）、模型名、API Key。
 
 Key 只保存在本机浏览器的 localStorage 里，不会上传，也不进 git。
 
@@ -33,6 +52,7 @@ Key 只保存在本机浏览器的 localStorage 里，不会上传，也不进 g
 
 **生成**
 
+- 四种服务商可选：Gemini、OpenRouter、opencode zen、任意 OpenAI 兼容端点
 - 文字描述或参考图两种输入方式
 - 预设：科技 Logo / 等距世界 / 线性图标 / 霓虹赛博 / 手绘草图
 - 风格、配色、主题、比例、复杂度、线条、视角、氛围可调
@@ -84,22 +104,37 @@ npm run build
 - **React 19 + TypeScript** — 界面
 - **Vite 8** — 构建
 - **Tailwind CSS** — 样式（当前走 CDN）
-- **Gemini / OpenRouter** — 生成后端
+- **Gemini / OpenRouter / opencode zen / 任意 OpenAI 兼容端点** — 生成后端
 
 ### 目录结构
 
 ```
 app/
 ├── main.go                 应用入口、窗口创建、自更新检查
+├── internal/services/      AIService：在 Go 侧代理 /chat/completions
 ├── internal/update/        自更新封装（Wails updater 的 provider 分支）
 ├── frontend/
 │   └── src/
 │       ├── App.tsx         主布局、生成流程编排
 │       ├── components/     界面组件
-│       ├── services/       Gemini / OpenRouter 调用
+│       ├── services/       AI 调用（Gemini 走 SDK，其余经 Go 代理）
 │       └── i18n/           中英词条
 └── build/                  各平台打包配置与图标
 ```
+
+### AI 请求为什么走 Go 侧
+
+Gemini 用官方 SDK 在前端直连（Google 完整支持 CORS）。OpenRouter、opencode、
+自定义端点则统一由 `internal/services/AIService` 在 Go 侧发请求，原因有两个：
+
+1. **CORS**：实测 `opencode.ai/zen/go/v1` 的 OPTIONS 预检返回 404、不带任何
+   `Access-Control` 头，浏览器语义下请求在预检阶段就被拦掉，报的是笼统的
+   「请求失败」。Go 侧没有这个限制。
+2. **请求头**：opencode 要求 `x-opencode-session`（用于路由），而这个头不在
+   CORS 白名单里，浏览器设不了。
+
+顺带把错误分好类返回前端：鉴权失败 / 请求过于频繁 / 网络错误 / 服务端错误 /
+请求被拒绝，而不是把服务端返回的 JSON 整段甩给用户。
 
 ### 自更新
 
