@@ -317,7 +317,10 @@ func main() {
 			// 限流不算故障：GitHub 匿名 API 只有 60 次/小时，反复调试很容易撞满。
 			// 静默跳过，下次启动自然会再查，没必要打扰用户。
 			if errors.Is(err, update.ErrRateLimited) {
-				slog.Debug("更新源限流，本次跳过")
+				// 提到 Info 级：Debug 在默认配置下不输出，用户看到的是「应用
+				// 打开了、更新检查毫无动静」，和功能坏掉的表现一模一样。
+				// 开发期反复发版很容易撞满 GitHub 匿名 API 的 60 次/小时配额。
+				slog.Info("更新源限流（GitHub 匿名 API 每小时 60 次），本次跳过检查", "err", err)
 				return
 			}
 			slog.Warn("检查更新失败", "err", err)
