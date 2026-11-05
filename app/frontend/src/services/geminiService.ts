@@ -6,6 +6,7 @@
 
 import { GoogleGenAI } from "@google/genai";
 import { GenerationOptions, ModelConfig, OPENAI_COMPAT_ENDPOINTS } from "../types";
+import { AIService } from "../../bindings/github.com/klphp/svg-studio/internal/services";
 
 // Helper to get the GoogleGenAI client
 const getClient = (config: ModelConfig) => {
@@ -86,31 +87,38 @@ const generateOpenAICompatSvg = async (
         headers["X-Title"] = "SVG Studio";
     }
 
-    try {
-        const response = await fetch(`${baseURL}/chat/completions`, {
-            method: "POST",
-            headers,
-            body: JSON.stringify({
-                model: config.model,
-                messages: messages
-            })
-        });
+    const bodyJSON = JSON.stringify({ model: config.model, messages });
 
-        if (!response.ok) {
-            // 尽量把服务端返回的错误说明带出来 —— 各家格式不完全一样，
-            // 先按 OpenAI 的 {error:{message}} 取，取不到就退回原始文本，
-            // 总比只报「请求失败」有用。
-            let detail = "";
-            try {
-                const err = await response.json();
-                detail = err?.error?.message || err?.message || JSON.stringify(err);
-            } catch {
-                detail = await response.text().catch(() => "");
-            }
-            throw new Error(`${response.status} ${detail || response.statusText}`);
+    // 走 Go 侧代理，不在 WebView 里 fetch。
+    //
+    // 实测 opencode.ai/zen/go/v1 的 OPTIONS 预检返回 404、不带任何
+    // Access-Control 头，浏览器的跨域请求会在预检阶段就被拦掉 —— 报的是
+    // 一个笼统的 CORS/failed to fetch，看不出真实原因。OpenRouter 带了
+    // allow-origin: *，所以在它上面直连能跑，问题被掩盖了很久。
+    //
+    // Go 侧不受 CORS 约束，还能加浏览器加不了的头（opencode 要求
+    // x-opencode-session，缺了直接 400 MissingSessionID）。
+    //
+    // 顺带一句：上面的 headers 变量现在只剩 openrouter 的归属头有实际意义，
+    // 但既然改由 Go 发请求，这些头也就没必要从这边传了。
+    try {
+        const [raw, errInfo] = await AIService.ChatCompletion(baseURL, config.apiKey, bodyJSON);
+
+        if (errInfo) {
+            // Go 侧已经把状态码和错误体解析好了，这里只负责组装一句
+            // 能直接给用户看的话。
+            const prefix = {
+                config: "配置问题",
+                auth: "鉴权失败",
+                ratelimit: "请求过于频繁",
+                network: "网络错误",
+                server: "服务端错误",
+                request: "请求被拒绝",
+            }[errInfo.kind] || "请求失败";
+            throw new Error(`${prefix}：${errInfo.message}`);
         }
 
-        const result = await response.json();
+        const result = JSON.parse(raw);
         return cleanSvgResponse(result.choices?.[0]?.message?.content);
     } catch (error: any) {
         console.error("OpenAI-compat request failed:", error);

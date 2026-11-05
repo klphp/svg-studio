@@ -14,6 +14,7 @@ import (
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 
+	"github.com/klphp/svg-studio/internal/services"
 	"github.com/klphp/svg-studio/internal/update"
 )
 
@@ -23,7 +24,7 @@ import (
 // 关键：updater 是拿这个值去和最新的 release tag 比大小，所以发版时一定要改
 // 这里。本地调试想看"能不能检测到新版"，就把它改小一版（比如发 0.0.2 的
 // release，这里留 0.0.1），否则永远看不到更新提示。
-const Version = "0.0.3"
+const Version = "0.0.4"
 
 // updateRepo 是自更新的 GitHub 仓库（owner/repo）。
 // 试水方案用 github provider：免费、零服务器、零签名成本。
@@ -187,6 +188,9 @@ func main() {
 	app := application.New(application.Options{
 		Name:        "svg-studio",
 		Description: "AI 驱动的 SVG 生成与编辑器",
+		Services: []application.Service{
+			application.NewService(services.NewAIService()),
+		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
 		},
