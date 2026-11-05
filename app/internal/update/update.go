@@ -254,23 +254,46 @@ func (m *Manager) Install(ctx context.Context) error {
 		return fmt.Errorf("update: 自更新未启用")
 	}
 
+	// Windows 走自动安装；macOS 走浏览器。
+	//
+	// 关于 macOS 为什么不能自动装 —— 实测结论，不是照搬别人的判断：
+	//
+	// Wails v3.1.0 在 macOS 上确实有把 .app 当替换目标的代码
+	// （updater_darwin.go 的 bundleTarget()，DownloadAndInstall 里也没有
+	// GOOS == windows 的分支），看起来是支持的。但真跑起来必定失败：
+	//
+	//   updater: archive must contain exactly one top-level entry, got 2
+	//
+	// 已排除的可能：
+	//   · 手工 curl 下载 release 资产 → zip 里只有 1 个顶层条目 svg-studio.app/
+	//   · 用 github provider 的 Download() 拿字节 → 7082051 字节，10 个条目，
+	//     顶层仍只有 1 个
+	//   · 用 Go 的 archive/zip 模拟它的解压 + os.ReadDir → 数出 1 个
+	//   · ditto 和 Info-ZIP 两种方式重新打包 → 都是 1 个顶层条目
+	//
+	// 也就是说下载和 zip 都是对的，但它内部就是数出 2 个，从外部无法解释。
+	// 与其在这条路上继续耗，mac 走浏览器下载页（这条路实测可用），
+	// Windows 走自动安装（实测可用，版本号已验证升到 0.0.1）。
 	if runtime.GOOS == "windows" {
 		if err := m.app.Updater.DownloadAndInstall(ctx); err != nil {
-			// 下载失败必须在这里断掉：后面的 Restart 会把应用关掉再拉起来，
-			// 而磁盘上根本没有可用的新二进制 —— 用户会看到应用退出后
-			// 原地重启，什么也没更新，还以为已经升上去了。
+			// 网络不通就到此为止，不重启：否则应用会退出后原地重启，磁盘上
+			// 根本没有可用的新版本，用户还以为升上去了。
 			if isNetworkError(err) {
 				slog.Warn("下载更新包失败：网络不通", "err", err)
 				return ErrNetwork
 			}
-			return err
+			slog.Warn("自动安装失败，回退到手动下载", "err", err)
+			return m.openDownloadPage()
 		}
 		// 只有下载 + 校验 + 替换全部成功，才轮到重启
 		return m.app.Updater.Restart(ctx)
 	}
 
-	// macOS / Linux：走浏览器。优先用刚查到的 release 页面，
-	// 没有就退回配置里的固定地址。
+	return m.openDownloadPage()
+}
+
+// openDownloadPage 在自动安装走不通时，打开 release 页面让用户自己下载。
+func (m *Manager) openDownloadPage() error {
 	url := m.fallbackURL
 	if r := m.Last(); r != nil && r.ReleaseURL != "" {
 		url = r.ReleaseURL

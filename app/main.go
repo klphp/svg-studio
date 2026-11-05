@@ -101,26 +101,35 @@ func cleanupUpdateLeftovers() {
 		}
 	}
 
-	// wails-update-* staging 目录
+	// wails-update-* staging 目录。
+	//
+	// 这里必须按时间过滤，只删「老的」。原因是 Restart() 会 spawn 一个
+	// helper 进程（还是这个 exe），helper 启动时同样会跑到这个函数 ——
+	// 如果无脑删，就会把 helper 正在等着安装的 staging 目录一起删掉，
+	// 更新直接失败：
+	//   updater: helper did not signal readiness: staged artifact is
+	//   unavailable: stat .../wails-update-187661749/svg-studio.app
+	// 这个 bug 是我自己引入的，实测才暴露出来。
+	//
+	// 10 分钟足够覆盖任何正常下载；超过这个时间还留着的，肯定是上次更新
+	// 中途崩掉或断电的残骸，删掉是安全的。
 	dir := filepath.Dir(exe)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
 	for _, e := range entries {
-		if e.IsDir() && strings.HasPrefix(e.Name(), "wails-update-") {
-			if os.RemoveAll(filepath.Join(dir, e.Name())) == nil {
-				slog.Info("清理更新临时目录", "path", e.Name())
-			}
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), "wails-update-") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || time.Since(info.ModTime()) < 10*time.Minute {
+			continue // 可能是正在进行的更新，别动
+		}
+		if os.RemoveAll(filepath.Join(dir, e.Name())) == nil {
+			slog.Info("清理遗留的更新临时目录", "path", e.Name())
 		}
 	}
-}
-
-func init() {
-	// Register a custom event whose associated data type is string.
-	// This is not required, but the binding generator will pick up registered events
-	// and provide a strongly typed JS/TS API for them.
-	application.RegisterEvent[string]("time")
 }
 
 // main function serves as the application's entry point. It initializes the application, creates a window,
@@ -137,10 +146,7 @@ func main() {
 	// 'Mac' options tailor the application when running an macOS.
 	app := application.New(application.Options{
 		Name:        "svg-studio",
-		Description: "A demo of using raw HTML & CSS",
-		Services: []application.Service{
-			application.NewService(&GreetService{}),
-		},
+		Description: "AI 驱动的 SVG 生成与编辑器",
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
 		},
@@ -155,7 +161,7 @@ func main() {
 	// 'BackgroundColour' is the background colour of the window.
 	// 'URL' is the URL that will be loaded into the webview.
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title: "Window 1",
+		Title: "SVG Studio",
 		// Window sized to the golden ratio (1000 / 618 ≈ 1.618).
 		Width:  1800,
 		Height: 1400,
@@ -168,7 +174,7 @@ func main() {
 		URL:              "/",
 	})
 
-	log.Printf("=== svg-studio %s 启动 ===", Version)
+	slog.Info("启动", "app", "svg-studio", "version", Version)
 
 	// ── 自更新 ──
 	//
@@ -185,15 +191,6 @@ func main() {
 		slog.Warn("自更新未启用", "err", err)
 	}
 
-	// Create a goroutine that emits an event containing the current time every second.
-	// The frontend can listen to this event and update the UI accordingly.
-	go func() {
-		for {
-			now := time.Now().Format(time.RFC1123)
-			app.Event.Emit("time", now)
-			time.Sleep(time.Second)
-		}
-	}()
 
 	// 启动后异步查一次更新。放 goroutine 里是为了不阻塞启动 —— 网络慢的话
 	// 同步查会让窗口卡在启动阶段，体感很差。
@@ -227,6 +224,52 @@ func main() {
 			"url", rel.ReleaseURL,
 			"autoInstall", rel.AutoInstall,
 		)
+
+		// 自动安装会重启应用，用户没导出的 SVG 会丢。所以必须先问一句，
+		// 不能悄悄重启 —— 用户正画到一半突然黑屏重启，比不更新更糟。
+		//
+		// Show() 内部走 InvokeSync，会阻塞到对话框关闭，回调在此之前已触发，
+		// 所以返回后用普通变量判断就行，不需要 channel。
+		// 测试用旁路：设了 SVG_STUDIO_AUTO_UPDATE=1 就跳过确认框直接装。
+		// 存在的意义是把「下载 + 替换 + 重启」这条链路和「弹框等人点」解耦，
+		// 否则每次验证安装都要有人在机器前面点一下。
+		var confirmed bool
+		if os.Getenv("SVG_STUDIO_AUTO_UPDATE") == "1" {
+			slog.Info("跳过确认框（SVG_STUDIO_AUTO_UPDATE=1）")
+			confirmed = true
+		}
+
+		// 两个平台的后果不一样，文案必须分开：Windows 会自动下载、替换 exe
+		// 然后重启，未保存的内容会丢；macOS 只是打开下载页面，应用本身不动，
+		// 当前编辑不受影响。写成一样的会误导用户。
+		message := "将打开浏览器到下载页面，由你手动下载安装。\n\n" +
+			"应用不会自动关闭，当前编辑不受影响。"
+		okLabel := "前往下载"
+		if rel.AutoInstall {
+			message = "更新会自动下载并安装，完成后应用将重启。\n\n" +
+				"未保存的编辑会丢失，建议先把需要的 SVG 导出再更新。"
+			okLabel = "立即更新"
+		}
+
+		dlg := app.Dialog.Question()
+		dlg.SetTitle("发现新版本 " + rel.Version)
+		dlg.SetMessage(message)
+		dlg.AddButton(okLabel).OnClick(func() { confirmed = true })
+		dlg.AddButton("稍后").OnClick(func() {})
+
+		if !confirmed {
+			slog.Info("弹出更新确认框", "title", "发现新版本 "+rel.Version)
+			shownAt := time.Now()
+			dlg.Show()
+			slog.Info("确认框已关闭", "waitSec", time.Since(shownAt).Seconds(), "confirmed", confirmed)
+		}
+
+		if !confirmed {
+			slog.Info("用户推迟了更新", "latest", rel.Version)
+			return
+		}
+
+		slog.Info("用户确认更新，开始安装", "latest", rel.Version)
 
 		// macOS 不自动装：Wails 的替换流程只认 .zip，不支持 dmg，
 		// 而 dmg 才是 macOS 的分发惯例。这里只提示，让用户自己去下。
