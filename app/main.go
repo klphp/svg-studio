@@ -24,7 +24,7 @@ import (
 // 关键：updater 是拿这个值去和最新的 release tag 比大小，所以发版时一定要改
 // 这里。本地调试想看"能不能检测到新版"，就把它改小一版（比如发 0.0.2 的
 // release，这里留 0.0.1），否则永远看不到更新提示。
-const Version = "0.0.6"
+const Version = "0.0.7"
 
 // updateRepo 是自更新的 GitHub 仓库（owner/repo）。
 // 试水方案用 github provider：免费、零服务器、零签名成本。
@@ -76,6 +76,20 @@ func ensureLicenseFile() {
 	}
 }
 
+// ignoreWriteErr 包一层 writer，吞掉写入错误。
+//
+// 专门给 Windows GUI 下的 os.Stderr 用：那个句柄无效，每次写都报错，
+// 而 io.MultiWriter 会把这种错误往上抛，连累真正需要写的日志文件。
+type ignoreWriteErr struct{ w io.Writer }
+
+func (i ignoreWriteErr) Write(p []byte) (int, error) {
+	n, _ := i.w.Write(p)
+	if n == 0 {
+		return len(p), nil // 假装写成功，别让 MultiWriter 短路
+	}
+	return n, nil
+}
+
 // setupLogging 把 log 和 slog 同时写到 stderr 和日志文件。
 //
 // 为什么必须要文件：Windows 构建用 -ldflags="-H windowsgui"，进程没有控制台，
@@ -123,7 +137,17 @@ func setupLogging() {
 			continue
 		}
 
-		w := io.MultiWriter(os.Stderr, f)
+		// 顺序很关键：文件放前面。
+		//
+		// 原来是 io.MultiWriter(os.Stderr, f)，Windows 构建带 -H windowsgui，
+		// 进程没有控制台，os.Stderr 是无效句柄 —— 写它会返回错误，而
+		// MultiWriter 遇到任何一个 writer 报错就整体返回错误、不再往下写。
+		// 结果就是：日志文件创建成功（0 字节），OpenFile 也没报错，但内容
+		// 一个字都进不去。这个 bug 曾让「更新失败」彻底无从排查。
+		//
+		// 把 f 放前面，stderr 只在它成功之后才轮到；即便如此 stderr 仍可能
+		// 报错并污染返回值，所以用 ignoreErr 把它包起来。
+		w := io.MultiWriter(f, ignoreWriteErr{os.Stderr})
 		log.SetOutput(w)
 		slog.SetDefault(slog.New(slog.NewTextHandler(w, nil)))
 		slog.Info("日志已启用", "path", logPath)
