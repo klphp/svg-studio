@@ -128,10 +128,10 @@ func main() {
 		Enabled:    true,
 		Provider:   "github",
 		Repository: updateRepo,
-	}, Version, "")
+	}, Version, "https://github.com/"+updateRepo+"/releases/latest")
 
 	if err := updateMgr.Setup(); err != nil {
-		log.Printf("自更新未启用: %v", err)
+		slog.Warn("自更新未启用", "err", err)
 	}
 
 	// Create a goroutine that emits an event containing the current time every second.
@@ -158,20 +158,30 @@ func main() {
 
 		rel, err := updateMgr.Check(ctx)
 		if err != nil {
-			log.Printf("检查更新失败: %v", err)
+			slog.Warn("检查更新失败", "err", err)
 			return
 		}
-		if rel == nil {
-			return // 已是最新
+		if rel == nil || !rel.Available {
+			slog.Info("已是最新版本", "current", Version)
+			return
 		}
 
-		log.Printf("发现新版本 %s", rel.Version)
+		// 用 slog 而不是 log.Printf：log 包在这套设置下会被桥接到 slog，
+		// 而桥接后格式串里的 %s 不会展开，参数变成被丢弃的 attr —— 上一版
+		// 日志里出现 "发现新版本 " 后面空空的就是这个原因，看起来像
+		// Release.Version 是空的，其实只是没打印出来。
+		slog.Info("发现新版本",
+			"current", Version,
+			"latest", rel.Version,
+			"url", rel.ReleaseURL,
+			"autoInstall", rel.AutoInstall,
+		)
 
 		// macOS 不自动装：Wails 的替换流程只认 .zip，不支持 dmg，
 		// 而 dmg 才是 macOS 的分发惯例。这里只提示，让用户自己去下。
 		// Windows 才走自动安装。
 		if err := updateMgr.Install(ctx); err != nil {
-			log.Printf("自动安装失败（可能不是 Windows，或需要用户手动下载）: %v", err)
+			slog.Warn("安装更新失败", "err", err, "autoInstall", rel.AutoInstall)
 		}
 	}()
 
