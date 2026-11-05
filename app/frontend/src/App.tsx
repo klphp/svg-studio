@@ -11,6 +11,7 @@ import { generateSvgFromPrompt, generateSvgFromImage, refineSvg } from './servic
 import { GeneratedSvg, GenerationStatus, ApiError, GenerationOptions, ModelConfig } from './types';
 import { AlertCircle, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { useT } from "./i18n";
+import { HistoryService, GenerationRecord } from "../bindings/github.com/klphp/svg-studio/internal/services";
 
 // Helper to generate UUIDs locally
 const generateUUID = (): string => {
@@ -32,6 +33,65 @@ const App: React.FC = () => {
   const [status, setStatus] = useState<GenerationStatus>(GenerationStatus.IDLE);
   const [currentSvg, setCurrentSvg] = useState<GeneratedSvg | null>(null);
   const [history, setHistory] = useState<GeneratedSvg[]>([]);
+
+  /**
+   * 启动时从 SQLite 读历史。
+   *
+   * 之前历史只活在 useState 里，关掉应用就全没了 —— 「历史 (0)」一直是 0
+   * 就是这个原因。现在落到 SQLite，重启还在。
+   */
+  useEffect(() => {
+    (async () => {
+      try {
+        const [records, err] = await HistoryService.List(200);
+        if (err) {
+          console.warn("读取历史失败:", err.message);
+          return;
+        }
+        // GenerationRecord 和 GeneratedSvg 字段名不同（createdAt vs timestamp），
+        // 转换一下再喂给现有 UI，省得把整个历史侧栏都改一遍。
+        setHistory((records || []).map(r => ({
+          id: r.id,
+          content: r.content,
+          prompt: r.prompt,
+          timestamp: r.createdAt,
+        })));
+      } catch (e) {
+        console.warn("读取历史异常:", e);
+      }
+    })();
+  }, []);
+
+  /**
+   * 把一次生成存进 SQLite，并更新界面。
+   *
+   * 除了 SVG 本身，参数（风格/配色/比例等）也一起存 —— 光有源码，回头看
+   * 历史根本不知道当时怎么生成的，想微调都得重猜。
+   */
+  const persistHistory = async (svg: GeneratedSvg, options?: any) => {
+    setHistory(prev => [svg, ...prev]);
+    try {
+      // bindings 里 GenerationRecord 是 `export type`，只有类型没有构造函数，
+      // 所以不能 new —— 直接给结构匹配的字面量即可（或者用 as GenerationRecord
+      // 明确意图）。这里用后者，多一层编译期检查。
+      await HistoryService.Save({
+        id: svg.id,
+        prompt: svg.prompt,
+        content: svg.content,
+        style: options?.style ?? "",
+        color: options?.color ?? "",
+        theme: options?.theme ?? "",
+        ratio: options?.ratio ?? "",
+        complexity: options?.complexity ?? "",
+        provider: options?.modelConfig?.provider ?? "",
+        model: options?.modelConfig?.model ?? "",
+        createdAt: svg.timestamp,
+      } as GenerationRecord);
+    } catch (e) {
+      // 存不进库不该影响用户看图，记一条就够了
+      console.warn("保存历史失败:", e);
+    }
+  };
   const [error, setError] = useState<ApiError | null>(null);
   const [sidebarVisible, setSidebarVisible] = useState(true);
 
@@ -93,7 +153,7 @@ const App: React.FC = () => {
         timestamp: Date.now()
       };
       
-      setHistory(prev => [newSvg, ...prev]);
+      await persistHistory(newSvg, options);
       setCurrentSvg(newSvg);
       setStatus(GenerationStatus.SUCCESS);
     } catch (err: any) {
@@ -123,7 +183,8 @@ const App: React.FC = () => {
         timestamp: Date.now()
       };
 
-      setHistory(prev => [newSvg, ...prev]);
+      // 精修这条路径没有风格/配色这些参数，只有模型信息可存
+      await persistHistory(newSvg, { modelConfig });
       setCurrentSvg(newSvg);
       setStatus(GenerationStatus.SUCCESS);
     } catch (err: any) {

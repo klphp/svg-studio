@@ -12,3 +12,24 @@ export interface ErrorInfo {
     "kind": string;
     "message": string;
 }
+
+/**
+ * GenerationRecord 是一条生成历史。
+ * 
+ * 字段比前端的 GeneratedSvg 多，因为光留 SVG 源码和提示词，回头看历史时
+ * 根本不知道当时用的什么风格参数 —— 想复现都复现不了。参数一起存下来，
+ * 才有「照着这条再来一次」的可能。
+ */
+export interface GenerationRecord {
+    "id": string;
+    "prompt": string;
+    "content": string;
+    "style": string;
+    "color": string;
+    "theme": string;
+    "ratio": string;
+    "complexity": string;
+    "provider": string;
+    "model": string;
+    "createdAt": number;
+}

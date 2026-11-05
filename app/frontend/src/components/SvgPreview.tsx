@@ -5,10 +5,11 @@
 */
 
 import React, { useEffect, useRef, useState, useCallback, useLayoutEffect } from 'react';
-import { Code, ZoomIn, ZoomOut, Moon, Sun, Grid, Download, AlertTriangle, Maximize, Undo2, Redo2, Layers, ChevronLeft } from 'lucide-react';
+import { Code, ZoomIn, ZoomOut, Moon, Sun, Grid, Download, AlertTriangle, Maximize, Undo2, Redo2, Layers, ChevronLeft, Check } from 'lucide-react';
 import { GeneratedSvg, GenerationStatus } from '../types';
 import { EditorTools } from './EditorTools';
 import { useT } from "../i18n";
+import { FileService } from "../../bindings/github.com/klphp/svg-studio/internal/services";
 
 interface SvgPreviewProps {
   data: GeneratedSvg | null;
@@ -224,6 +225,7 @@ export const SvgPreview: React.FC<SvgPreviewProps> = ({ data, onRefine, status }
   const [showCode, setShowCode] = useState(false);
   const [showEditor, setShowEditor] = useState(true);
   
+  const [saveHint, setSaveHint] = useState<string>('');
   const [renderError, setRenderError] = useState<string | null>(null);
   const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
   
@@ -394,13 +396,29 @@ export const SvgPreview: React.FC<SvgPreviewProps> = ({ data, onRefine, status }
     }
   }, [currentContent]);
 
-  const handleDownload = () => {
-      const blob = new Blob([currentContent], {type: 'image/svg+xml'});
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `vector-${Date.now()}.svg`;
-      link.click();
+  const handleDownload = async () => {
+      // 原来走 Blob + <a download>，那是网页的做法 —— Wails 的 WebView 里
+      // 点击后没有任何反应，也不报错，用户以为按钮坏了。改走 Go 侧的原生
+      // 保存对话框：能选目录、能改文件名、保存完知道文件在哪。
+      const name = `vector-${Date.now()}.svg`;
+      const [saved, err] = await FileService.SaveText(
+          currentContent,
+          name,
+          'SVG 图片',
+          '*.svg',
+      );
+      if (err) {
+          setRenderError(`${err.message}`);
+          return;
+      }
+      if (saved) {
+          // 保存成功给个反馈，不然用户不确定到底存没存
+          setRenderError('');
+          setSaveHint(`已保存到 ${saved}`);
+          setTimeout(() => setSaveHint(''), 4000);
+          return;
+      }
+      // saved 为空表示用户取消了，什么都不做
   };
 
   // --- Drag & Drop Logic (Movement) ---
@@ -712,6 +730,15 @@ export const SvgPreview: React.FC<SvgPreviewProps> = ({ data, onRefine, status }
                 {renderError && (
                     <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-red-500/10 border border-red-500/50 text-red-200 px-4 py-2 rounded-lg flex items-center gap-2 z-50">
                         <AlertTriangle className="w-4 h-4" /> {renderError}
+                    </div>
+                )}
+
+                {/* 保存成功的反馈。没有它用户点了保存按钮，选择框关掉之后就
+                    不知道到底存没存、存在哪了。 */}
+                {saveHint && (
+                    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 max-w-[90%] bg-green-500/10 border border-green-500/40 text-green-200 px-4 py-2 rounded-lg flex items-center gap-2 z-50 text-xs">
+                        <Check className="w-4 h-4 shrink-0" />
+                        <span className="truncate">{saveHint}</span>
                     </div>
                 )}
                 

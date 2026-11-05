@@ -185,11 +185,20 @@ func main() {
 	// 'Assets' configures the asset server with the 'FS' variable pointing to the frontend files.
 	// 'Bind' is a list of Go struct instances. The frontend has access to the methods of these instances.
 	// 'Mac' options tailor the application when running an macOS.
+	// 历史库先建好再注册服务。建不起来就降级 —— 存不了历史不该让应用起不来。
+	historySvc, err := services.NewHistoryService()
+	if err != nil {
+		slog.Warn("历史库初始化失败，本次不记录历史", "err", err)
+		historySvc = nil
+	}
+
 	app := application.New(application.Options{
 		Name:        "svg-studio",
 		Description: "AI 驱动的 SVG 生成与编辑器",
 		Services: []application.Service{
 			application.NewService(services.NewAIService()),
+			application.NewService(services.NewFileService()),
+			application.NewService(historySvc),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
@@ -335,9 +344,13 @@ func main() {
 	}()
 
 	// Run the application. This blocks until the application has been exited.
-	err := app.Run()
+	err = app.Run()
 
 	// If an error occurred while running the application, log it and exit.
+	if historySvc != nil {
+		historySvc.Close()
+	}
+
 	if err != nil {
 		log.Fatal(err)
 	}
