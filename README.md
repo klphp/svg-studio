@@ -10,8 +10,10 @@ AI 驱动的 SVG 生成与编辑器。描述你想要什么，模型直接吐出
 
 | 平台 | 文件 |
 |---|---|
-| macOS (Intel) | `svg-studio-<版本>-darwin-amd64.zip` |
+| macOS (Intel) | `svg-studio-<版本>-darwin-amd64.dmg` |
 | Windows (x64) | `svg-studio-<版本>-windows-amd64.zip` |
+
+macOS 打开 dmg 后，把 svg-studio 拖到里面的 Applications 快捷方式上即可。
 
 **首次打开**
 
@@ -103,19 +105,23 @@ app/
 
 走 Wails 内置的 updater，`github` provider 指向本仓库的 Releases。版本号在 `app/main.go` 的 `const Version`，发版时同步改这里和 release tag（tag 的 `v` 前缀由 provider 自己剥掉）。
 
-行为差异：
+两个平台能力不同：
 
-- **Windows**：下载 zip → 替换 exe → 重启，全自动
-- **macOS**：打开 release 页面，由用户手动下载替换。Wails 的替换流程只认 `.zip`（内含 `.app`），而 dmg 才是 macOS 的分发惯例
+- **Windows**：全自动。下载 zip → 替换 exe → 重启。没有操作确认环节，所以更新前会弹框问一次，因为未保存的编辑会丢
+- **macOS**：半自动。程序下载 dmg 到 `~/Downloads` 并自动打开，用户把 app 拖到 Applications 完成替换
+
+**macOS 为什么不能全自动**：替换 `Contents/MacOS/` 里的二进制会让 `_CodeSignature/CodeResources` 的哈希对不上，签名失效，macOS 立刻弹「隐私与安全」要求手动放行；重新 ad-hoc 签名也没用，签名内容变了 Gatekeeper 照样拦。根因是没有 Apple 开发者 ID 和公证，系统不允许未公证的应用静默替换自身。所以只能退到「程序下载，用户拖一下」。
 
 日志在各平台的用户配置目录下：`<UserConfigDir>/svg-studio/app.log`。
 
 ### 发布新版本
 
 1. 同步版本号：`app/main.go` 的 `const Version`、`app/build/darwin/Info.plist`、`app/build/windows/info.json`、`app/frontend/package.json`
-2. 构建并打包。产物名必须是 `svg-studio-<版本>-<平台>-<架构>.zip` —— Wails 的资产匹配器只认 `darwin` / `windows` / `linux` 加 `amd64` / `arm64` 这些字面量
-3. zip 里**只能有一个顶层条目**：macOS 是 `svg-studio.app/`，Windows 是 `svg-studio.exe`
+2. 构建并打包。产物名必须含平台和架构字面量 —— Wails 的资产匹配器只认 `darwin` / `windows` / `linux` 加 `amd64` / `arm64`
+3. macOS 出 dmg（`wails3 tool package --format dmg`），Windows 出内含单个 exe 的 zip
 4. 发 release，tag 形如 `v0.0.1`
+
+**macOS 打包有个容易漏的步骤**：往 `Contents/Resources` 放 LICENSE 之后，原签名会失效，必须重新 `codesign --force --deep --sign - bin/svg-studio.app`，否则打出来的 dmg 里的 app 是签名损坏状态。
 
 ## 许可
 
