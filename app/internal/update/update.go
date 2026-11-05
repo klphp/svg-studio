@@ -321,6 +321,12 @@ func (m *Manager) Install(ctx context.Context) error {
 	// 所以结论：mac 上做不到无感的自动更新，走浏览器下载页。Windows 没有
 	// 这套机制，自动安装实测可用（版本号已验证升到 0.0.1）。
 	if runtime.GOOS == "windows" {
+		// 每一步都记日志。Windows 构建带 -H windowsgui，没有控制台，用户能提供的
+		// 唯一线索就是这个文件。之前日志初始化坏掉，导致「点了更新没反应」完全
+		// 无从排查，只能靠猜。
+		exe, _ := os.Executable()
+		slog.Info("开始自动更新", "currentVersion", m.currentVersion, "exe", exe)
+
 		if err := m.app.Updater.DownloadAndInstall(ctx); err != nil {
 			// 网络不通就到此为止，不重启：否则应用会退出后原地重启，磁盘上
 			// 根本没有可用的新版本，用户还以为升上去了。
@@ -328,11 +334,23 @@ func (m *Manager) Install(ctx context.Context) error {
 				slog.Warn("下载更新包失败：网络不通", "err", err)
 				return ErrNetwork
 			}
-			slog.Warn("自动安装失败，回退到手动下载", "err", err)
-			return m.openDownloadPage()
+			// 以前这里是 `return m.openDownloadPage()`：静默打开浏览器下载页，
+			// 调用方拿到 nil 当成功。用户看到浏览器跳出来，以为正在更新，实际
+			// 那是失败回退 —— 关掉浏览器再打开应用，版本没变，于是又提示升级。
+			// 现在把错误透出去，让界面能明确说「自动更新失败了」。
+			slog.Warn("自动安装失败，回退到手动下载",
+				"err", err, "errType", fmt.Sprintf("%T", err))
+			m.openDownloadPage()
+			return fmt.Errorf("自动更新失败，已为你打开下载页面。原因：%w", err)
 		}
-		// 只有下载 + 校验 + 替换全部成功，才轮到重启
-		return m.app.Updater.Restart(ctx)
+
+		slog.Info("下载与替换完成，准备重启")
+		if err := m.app.Updater.Restart(ctx); err != nil {
+			slog.Warn("重启失败", "err", err)
+			return fmt.Errorf("更新包已就位但重启失败，请手动关闭程序后再打开：%w", err)
+		}
+		slog.Info("重启指令已发出")
+		return nil
 	}
 
 	return m.installDarwin(ctx)

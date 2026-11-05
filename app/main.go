@@ -24,7 +24,7 @@ import (
 // 关键：updater 是拿这个值去和最新的 release tag 比大小，所以发版时一定要改
 // 这里。本地调试想看"能不能检测到新版"，就把它改小一版（比如发 0.0.2 的
 // release，这里留 0.0.1），否则永远看不到更新提示。
-const Version = "0.0.5"
+const Version = "0.0.6"
 
 // updateRepo 是自更新的 GitHub 仓库（owner/repo）。
 // 试水方案用 github provider：免费、零服务器、零签名成本。
@@ -88,23 +88,54 @@ func ensureLicenseFile() {
 //
 // 拿不到目录就算了，不能因为日志写不了就让应用起不来。
 func setupLogging() {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return
+	// 按优先级找可写的目录。原来只有 UserConfigDir 一条路，失败就静默 return ——
+	// Windows 上实测会出现「应用能跑、但日志一行都没有」的情况，而 Windows 构建
+	// 带 -H windowsgui（没有控制台，stderr 是无效句柄），日志一丢就彻底失明，
+	// 连排查的入口都没有。
+	//
+	// 现在退而求其次：配置目录不行就退到可执行文件旁边。还不行就写一个
+	// 标记文件说明失败原因，至少让人知道日志系统没起来。
+	var tried []string
+	addPaths := func() []string {
+		var out []string
+		if dir, err := os.UserConfigDir(); err == nil {
+			out = append(out, filepath.Join(dir, "svg-studio"))
+		} else {
+			tried = append(tried, "UserConfigDir: "+err.Error())
+		}
+		if exe, err := os.Executable(); err == nil {
+			out = append(out, filepath.Dir(exe))
+		} else {
+			tried = append(tried, "Executable: "+err.Error())
+		}
+		return out
 	}
-	logDir := filepath.Join(dir, "svg-studio")
-	if err := os.MkdirAll(logDir, 0o755); err != nil {
-		return
-	}
-	f, err := os.OpenFile(filepath.Join(logDir, "app.log"),
-		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
+
+	for _, logDir := range addPaths() {
+		if err := os.MkdirAll(logDir, 0o755); err != nil {
+			tried = append(tried, logDir+": MkdirAll: "+err.Error())
+			continue
+		}
+		logPath := filepath.Join(logDir, "app.log")
+		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			tried = append(tried, logPath+": OpenFile: "+err.Error())
+			continue
+		}
+
+		w := io.MultiWriter(os.Stderr, f)
+		log.SetOutput(w)
+		slog.SetDefault(slog.New(slog.NewTextHandler(w, nil)))
+		slog.Info("日志已启用", "path", logPath)
 		return
 	}
 
-	w := io.MultiWriter(os.Stderr, f)
-	log.SetOutput(w)
-	slog.SetDefault(slog.New(slog.NewTextHandler(w, nil)))
+	// 全部失败：留个线索。写在 exe 旁边，用户反馈问题时能看到。
+	if exe, err := os.Executable(); err == nil {
+		msg := "无法初始化日志文件，尝试过：\n" + strings.Join(tried, "\n")
+		_ = os.WriteFile(filepath.Join(filepath.Dir(exe), "log-init-error.txt"),
+			[]byte(msg), 0o644)
+	}
 }
 
 // cleanupUpdateLeftovers 清掉自更新在可执行文件旁边留下的残留。
@@ -340,6 +371,14 @@ func main() {
 		// Windows 才走自动安装。
 		if err := updateMgr.Install(ctx); err != nil {
 			slog.Warn("安装更新失败", "err", err, "autoInstall", rel.AutoInstall)
+
+			// 必须让用户知道失败了。以前这里只写日志，而 Windows 上日志文件
+			// 又因为 setupLogging 失败而根本没生成 —— 用户看到浏览器跳出来就
+			// 以为在更新，关掉再开还是老版本，于是反复收到升级提示。
+			errDlg := app.Dialog.Error()
+			errDlg.SetTitle("更新未完成")
+			errDlg.SetMessage(err.Error())
+			errDlg.Show()
 		}
 	}()
 
