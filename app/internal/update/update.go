@@ -272,8 +272,20 @@ func (m *Manager) Install(ctx context.Context) error {
 	//   · ditto 和 Info-ZIP 两种方式重新打包 → 都是 1 个顶层条目
 	//
 	// 也就是说下载和 zip 都是对的，但它内部就是数出 2 个，从外部无法解释。
-	// 与其在这条路上继续耗，mac 走浏览器下载页（这条路实测可用），
-	// Windows 走自动安装（实测可用，版本号已验证升到 0.0.1）。
+	//
+	// 后来又试过绕开它、自己实现「只替换 Contents/MacOS 里的二进制」这种
+	// 做法（参考 V2rayU 的思路，bundle 结构一样只有一个可执行文件）。
+	// 技术上能跑通：替换后进程确实起得来。但**用户实测会被 macOS 拦住**：
+	// 替换掉二进制、_CodeSignature/CodeResources 的哈希就对不上，签名失效，
+	// 系统弹「隐私与安全」提示要求手动点「仍要打开」。
+	//
+	// 重新 ad-hoc 签名（codesign --force --deep --sign -）也救不了 —— 签名
+	// 内容变了，Gatekeeper 照样当成新的未信任程序。根因是没有 Apple 开发者
+	// ID（$99/年）和公证，macOS 不允许任何未公证的应用静默替换自身，这是
+	// 系统级设计，不是代码能绕的。
+	//
+	// 所以结论：mac 上做不到无感的自动更新，走浏览器下载页。Windows 没有
+	// 这套机制，自动安装实测可用（版本号已验证升到 0.0.1）。
 	if runtime.GOOS == "windows" {
 		if err := m.app.Updater.DownloadAndInstall(ctx); err != nil {
 			// 网络不通就到此为止，不重启：否则应用会退出后原地重启，磁盘上
