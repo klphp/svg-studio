@@ -140,6 +140,11 @@ type Result struct {
 	// Windows 为 true（rename-aside 原子替换 + helper 重启）；
 	// macOS 为 false，前端应把按钮文案改成「前往下载」。
 	AutoInstall bool `json:"autoInstall"`
+
+	// ArtifactSize 是安装包字节数，来自 release 元数据。
+	// 用来按保守网速推算下载超时 —— 写死超时对「包大小未知」的场景不成立：
+	// 7 MB 的包给 5 分钟够，50 MB 的包就完全不够。
+	ArtifactSize int64 `json:"artifactSize"`
 }
 
 // Manager 持有 Updater 配置和最近一次 Check 的结果。
@@ -148,6 +153,10 @@ type Manager struct {
 	cfg            Config
 	currentVersion string
 	fallbackURL    string
+
+	// lastRelease 保留最近一次 Check 拿到的完整 Release，Install 需要从
+	// 里面取 Artifact.Size 来算下载超时。
+	lastRelease *updater.Release
 
 	// prov 是 Setup 构造出来的 provider。macOS 上不用 Wails 的
 	// DownloadAndInstall（见 Install 的注释），改由我们自己下载安装包，
@@ -255,15 +264,17 @@ func (m *Manager) Check(ctx context.Context) (*Result, error) {
 	}
 
 	res := &Result{
-		Available:   true,
-		Version:     rel.Version,
-		Notes:       rel.Notes,
-		ReleaseURL:  m.releaseURL(rel),
-		AutoInstall: runtime.GOOS == "windows",
+		Available:    true,
+		Version:      rel.Version,
+		Notes:        rel.Notes,
+		ReleaseURL:   m.releaseURL(rel),
+		AutoInstall:  runtime.GOOS == "windows",
+		ArtifactSize: rel.Artifact.Size,
 	}
 
 	m.mu.Lock()
 	m.last = res
+	m.lastRelease = rel
 	m.mu.Unlock()
 
 	return res, nil
@@ -274,6 +285,49 @@ func (m *Manager) Last() *Result {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.last
+}
+
+// 下载超时的推算依据。
+//
+// 为什么不写死一个时长：包大小和用户网速都是未知量。7 MB 的包给 5 分钟够用，
+// 但一个 50 MB 的包（带模型、字体、媒体资源）按同样预算必然超时。
+//
+// 用 30 KB/s 作为保守下限：国内直连 GitHub 实测过 151~431 KB/s 的区间，
+// 取 30 KB/s 意味着即使掉到常态速度的 1/5 也还能下完。
+const (
+	// minDownloadSpeed 是推定超时时假设的最慢速度（30 KB/s）。
+	minDownloadSpeed = 30 * 1024
+
+	// downloadTimeoutSlack 在上面的推算值上再留的余量，吸收波动与 TCP 重传。
+	downloadTimeoutSlack = 1.5
+
+	// 边界：太小的包不该只给几秒；异常大的包也别让应用卡到天荒地老。
+	minDownloadTimeout = 2 * time.Minute
+	maxDownloadTimeout = 40 * time.Minute
+
+	// 拿不到包大小时（老版本 release 或缺元数据）的兜底值。
+	fallbackDownloadTimeout = 5 * time.Minute
+)
+
+// downloadTimeout 按安装包大小推算一个宽容的下载超时。
+//
+// size 来自 release 元数据的 Artifact.Size，拿不到就退回固定值。
+func downloadTimeout(size int64) time.Duration {
+	if size <= 0 {
+		return fallbackDownloadTimeout
+	}
+
+	// 字节 ÷ 字节每秒 = 秒；byte/30KB/s 的换算即 size/minDownloadSpeed
+	base := time.Duration(float64(size)/float64(minDownloadSpeed)) * time.Second
+	d := time.Duration(float64(base) * downloadTimeoutSlack)
+
+	if d < minDownloadTimeout {
+		d = minDownloadTimeout
+	}
+	if d > maxDownloadTimeout {
+		d = maxDownloadTimeout
+	}
+	return d
 }
 
 // Install 执行更新。
@@ -287,6 +341,24 @@ func (m *Manager) Install(ctx context.Context) error {
 	if !m.cfg.Enabled {
 		return fmt.Errorf("update: 自更新未启用")
 	}
+
+	// 下载预算按包大小推算，不写死。
+	//
+	// 因为「包多大」和「网多慢」都是安装时才知道的未知量：写死 5 分钟对
+	// 7 MB 的包够用，但一个 50 MB 的包（带模型/字体/媒体）按同样预算必然
+	// 超时。用 release 元数据里的 Artifact.Size ÷ 30 KB/s，再留 50% 余量。
+	size := int64(0)
+	if r := m.Last(); r != nil {
+		size = r.ArtifactSize
+	}
+	budget := downloadTimeout(size)
+
+	// WithoutCancel 摘掉上层的取消信号（保留 ctx 里的值），超时只由 budget
+	// 决定 —— 否则调用方一个短超时 ctx 就能把下载掐死。
+	dlCtx, dlCancel := context.WithTimeout(context.WithoutCancel(ctx), budget)
+	defer dlCancel()
+
+	slog.Info("下载预算", "artifactSizeBytes", size, "timeoutSec", int(budget.Seconds()))
 
 	// Windows 走自动安装；macOS 走浏览器。
 	//
@@ -327,7 +399,7 @@ func (m *Manager) Install(ctx context.Context) error {
 		exe, _ := os.Executable()
 		slog.Info("开始自动更新", "currentVersion", m.currentVersion, "exe", exe)
 
-		if err := m.app.Updater.DownloadAndInstall(ctx); err != nil {
+		if err := m.app.Updater.DownloadAndInstall(dlCtx); err != nil {
 			// 网络不通就到此为止，不重启：否则应用会退出后原地重启，磁盘上
 			// 根本没有可用的新版本，用户还以为升上去了。
 			if isNetworkError(err) {
@@ -353,7 +425,7 @@ func (m *Manager) Install(ctx context.Context) error {
 		}
 
 		slog.Info("下载与替换完成，准备重启")
-		if err := m.app.Updater.Restart(ctx); err != nil {
+		if err := m.app.Updater.Restart(dlCtx); err != nil {
 			slog.Warn("重启失败", "err", err)
 			return fmt.Errorf("更新包已就位但重启失败，请手动关闭程序后再打开：%w", err)
 		}
