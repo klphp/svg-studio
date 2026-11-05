@@ -19,7 +19,7 @@ import { Wand2, Sparkles, Upload, PlayCircle, History, PenTool, ChevronDown, Ban
 const isMacApp = /mac/i.test(
   (navigator as any).userAgentData?.platform ?? navigator.platform ?? '',
 );
-import { GenerationStatus, GenerationOptions, GeneratedSvg, ModelConfig } from '../types';
+import { GenerationStatus, GenerationOptions, GeneratedSvg, ModelConfig, OPENAI_COMPAT_ENDPOINTS } from '../types';
 import { useT, useLocale } from "../i18n";
 
 interface InputSectionProps {
@@ -265,23 +265,33 @@ export const InputSection: React.FC<InputSectionProps> = ({
                         <div className="space-y-2">
                              <label className="text-[10px] uppercase font-bold text-zinc-500">{t("AI Provider")}</label>
                              <div className="grid grid-cols-2 gap-2">
-                                 <button 
-                                    onClick={() => setTempConfig({...tempConfig, provider: 'google', model: 'gemini-3-pro-preview'})}
-                                    className={`py-2 px-3 rounded-lg border text-xs font-medium transition-all flex items-center justify-center gap-2 ${tempConfig.provider === 'google' ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-zinc-800 border-white/10 text-zinc-400 hover:bg-zinc-700'}`}
-                                 >
-                                     <Sparkles className="w-3 h-3" /> Google Gemini
-                                 </button>
-                                 <button 
-                                    onClick={() => setTempConfig({...tempConfig, provider: 'openrouter', model: 'google/gemini-2.0-flash-exp:free'})}
-                                    className={`py-2 px-3 rounded-lg border text-xs font-medium transition-all flex items-center justify-center gap-2 ${tempConfig.provider === 'openrouter' ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-zinc-800 border-white/10 text-zinc-400 hover:bg-zinc-700'}`}
-                                 >
-                                     <Globe className="w-3 h-3" /> OpenRouter
-                                 </button>
+                                 {([
+                                    { id: 'google',     label: 'Google Gemini', model: 'gemini-3-pro-preview',                    icon: Sparkles },
+                                    { id: 'openrouter', label: 'OpenRouter',    model: 'google/gemini-2.0-flash-exp:free',         icon: Globe },
+                                    { id: 'opencode',   label: 'opencode zen',  model: 'deepseek-v4.1-flash',                       icon: Zap },
+                                    { id: 'custom',     label: t('Custom'),     model: '',                                          icon: Settings2 },
+                                 ] as const).map(p => (
+                                    <button
+                                       key={p.id}
+                                       onClick={() => setTempConfig({
+                                           ...tempConfig,
+                                           provider: p.id,
+                                           model: p.model,
+                                           // 切到 custom 时把当前端点带过去，省得用户从零输
+                                           baseURL: p.id === 'custom'
+                                               ? (tempConfig.baseURL || OPENAI_COMPAT_ENDPOINTS[tempConfig.provider] || '')
+                                               : undefined,
+                                       })}
+                                       className={`py-2 px-3 rounded-lg border text-xs font-medium transition-all flex items-center justify-center gap-2 ${tempConfig.provider === p.id ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-zinc-800 border-white/10 text-zinc-400 hover:bg-zinc-700'}`}
+                                    >
+                                        <p.icon className="w-3 h-3" /> {p.label}
+                                    </button>
+                                 ))}
                              </div>
                         </div>
 
-                        {/* OpenRouter Config */}
-                        {tempConfig.provider === 'openrouter' && (
+                        {/* OpenAI 兼容服务商配置（OpenRouter / opencode / 自定义） */}
+                        {tempConfig.provider !== 'google' && (
                             <div className="space-y-4 animate-in slide-in-from-top-2">
                                 <div className="space-y-2">
                                     <label className="text-[10px] uppercase font-bold text-zinc-500">{t("API Key")}</label>
@@ -298,25 +308,59 @@ export const InputSection: React.FC<InputSectionProps> = ({
                                     <p className="text-[10px] text-zinc-600">{t("Key is stored locally in your browser.")}</p>
                                 </div>
                                 
+                                {/* 端点。custom 才可编辑，其它显示只读提示，避免用户以为能改 */}
+                                <div className="space-y-2">
+                                     <label className="text-[10px] uppercase font-bold text-zinc-500">{t("Base URL")}</label>
+                                     {tempConfig.provider === 'custom' ? (
+                                         <input
+                                            type="text"
+                                            value={tempConfig.baseURL || ''}
+                                            onChange={(e) => setTempConfig({...tempConfig, baseURL: e.target.value})}
+                                            placeholder="https://example.com/v1"
+                                            className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none"
+                                         />
+                                     ) : (
+                                         <div className="text-[10px] font-mono text-zinc-600 bg-zinc-950 border border-white/5 rounded-lg px-3 py-2 break-all">
+                                             {OPENAI_COMPAT_ENDPOINTS[tempConfig.provider]}
+                                         </div>
+                                     )}
+                                     <p className="text-[10px] text-zinc-600">
+                                         {t("Any OpenAI-compatible /chat/completions endpoint works.")}
+                                     </p>
+                                </div>
+
                                 <div className="space-y-2">
                                      <label className="text-[10px] uppercase font-bold text-zinc-500">{t("Model")}</label>
-                                     <select 
-                                        value={tempConfig.model}
-                                        onChange={(e) => setTempConfig({...tempConfig, model: e.target.value})}
-                                        className="w-full bg-zinc-950 border border-white/10 rounded-lg px-2 py-2 text-xs text-white focus:border-indigo-500 outline-none"
-                                     >
-                                         {OPENROUTER_MODELS.map(m => (
-                                             <option key={m.id} value={m.id}>{m.name}</option>
-                                         ))}
-                                         <option value="custom">{t("Custom...")}</option>
-                                     </select>
-                                     {!OPENROUTER_MODELS.find(m => m.id === tempConfig.model) && (
-                                         <input 
+                                     {tempConfig.provider === 'openrouter' ? (
+                                       <>
+                                         <select 
+                                            value={tempConfig.model}
+                                            onChange={(e) => setTempConfig({...tempConfig, model: e.target.value})}
+                                            className="w-full bg-zinc-950 border border-white/10 rounded-lg px-2 py-2 text-xs text-white focus:border-indigo-500 outline-none"
+                                         >
+                                             {OPENROUTER_MODELS.map(m => (
+                                                 <option key={m.id} value={m.id}>{m.name}</option>
+                                             ))}
+                                             <option value="custom">{t("Custom...")}</option>
+                                         </select>
+                                         {!OPENROUTER_MODELS.find(m => m.id === tempConfig.model) && (
+                                             <input 
+                                                type="text"
+                                                value={tempConfig.model}
+                                                onChange={(e) => setTempConfig({...tempConfig, model: e.target.value})}
+                                                placeholder={t("vendor/model-name")}
+                                                className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none mt-2"
+                                             />
+                                         )}
+                                       </>
+                                     ) : (
+                                         /* opencode / custom 没有预设列表，直接给文本框 */
+                                         <input
                                             type="text"
                                             value={tempConfig.model}
                                             onChange={(e) => setTempConfig({...tempConfig, model: e.target.value})}
-                                            placeholder={t("vendor/model-name")}
-                                            className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none mt-2"
+                                            placeholder={tempConfig.provider === 'opencode' ? 'deepseek-v4.1-flash' : t("vendor/model-name")}
+                                            className="w-full bg-zinc-950 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:border-indigo-500 outline-none"
                                          />
                                      )}
                                 </div>
@@ -417,7 +461,12 @@ export const InputSection: React.FC<InputSectionProps> = ({
                 <div>
                     <h1 className="text-sm font-bold text-white leading-none">SVG Studio</h1>
                     <p className="text-[10px] text-zinc-500 font-medium truncate max-w-[100px]">
-                        {modelConfig.provider === 'google' ? 'Gemini Native' : 'OpenRouter'}
+                        {{
+                            google: 'Gemini Native',
+                            openrouter: 'OpenRouter',
+                            opencode: 'opencode zen',
+                            custom: 'Custom Endpoint',
+                        }[modelConfig.provider] || modelConfig.provider}
                     </p>
                 </div>
              </div>

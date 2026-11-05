@@ -208,6 +208,9 @@ export const zh: Record<string, string> = {
   "Linear Icon": "线性图标",
 
   // ── 其它 ──
+  "Custom": "自定义",
+  "Base URL": "接口地址",
+  "Any OpenAI-compatible /chat/completions endpoint works.": "任何 OpenAI 兼容的 /chat/completions 端点都能用。",
   "Switch to Image Input": "切换到图片输入",
   "Switch to Text Input": "切换到文字输入",
   "On": "开",

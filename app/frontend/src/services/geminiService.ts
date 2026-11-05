@@ -5,7 +5,7 @@
 */
 
 import { GoogleGenAI } from "@google/genai";
-import { GenerationOptions, ModelConfig } from "../types";
+import { GenerationOptions, ModelConfig, OPENAI_COMPAT_ENDPOINTS } from "../types";
 
 // Helper to get the GoogleGenAI client
 const getClient = (config: ModelConfig) => {
@@ -51,39 +51,70 @@ const getSystemPrompt = (options: GenerationOptions) => `
 `;
 
 /**
- * Handles OpenRouter API calls
+ * 走 OpenAI 兼容的 /chat/completions 接口。
+ *
+ * OpenRouter、opencode zen、以及用户自填的 custom 端点都是这套协议，
+ * 所以一个函数覆盖，靠 baseURL 区分。只有 OpenRouter 需要额外的
+ * HTTP-Referer / X-Title 两个归属头（它按这两个字段统计来源，
+ * 别的服务商不认识、也不需要）。
  */
-const generateOpenRouterSvg = async (
-    messages: any[], 
+const resolveBaseURL = (config: ModelConfig): string => {
+    if (config.provider === 'custom') {
+        return (config.baseURL || '').trim().replace(/\/+$/, '');
+    }
+    return OPENAI_COMPAT_ENDPOINTS[config.provider] || '';
+};
+
+const generateOpenAICompatSvg = async (
+    messages: any[],
     config: ModelConfig
 ): Promise<string> => {
-    if (!config.apiKey) throw new Error("OpenRouter API Key is missing. Please check settings.");
+    const baseURL = resolveBaseURL(config);
+    if (!baseURL) {
+        throw new Error("接口地址为空，请在设置里填写 Base URL。");
+    }
+    if (!config.apiKey) {
+        throw new Error("API Key 为空，请在设置里填写。");
+    }
+
+    const headers: Record<string, string> = {
+        "Authorization": `Bearer ${config.apiKey}`,
+        "Content-Type": "application/json",
+    };
+    if (config.provider === 'openrouter') {
+        headers["HTTP-Referer"] = window.location.origin;
+        headers["X-Title"] = "SVG Studio";
+    }
 
     try {
-        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        const response = await fetch(`${baseURL}/chat/completions`, {
             method: "POST",
-            headers: {
-                "Authorization": `Bearer ${config.apiKey}`,
-                "HTTP-Referer": window.location.origin,
-                "X-Title": "SVG Studio",
-                "Content-Type": "application/json"
-            },
+            headers,
             body: JSON.stringify({
-                model: config.model || "google/gemini-2.0-flash-exp:free",
+                model: config.model,
                 messages: messages
             })
         });
 
         if (!response.ok) {
-            const err = await response.json();
-            throw new Error(err.error?.message || "OpenRouter API request failed");
+            // 尽量把服务端返回的错误说明带出来 —— 各家格式不完全一样，
+            // 先按 OpenAI 的 {error:{message}} 取，取不到就退回原始文本，
+            // 总比只报「请求失败」有用。
+            let detail = "";
+            try {
+                const err = await response.json();
+                detail = err?.error?.message || err?.message || JSON.stringify(err);
+            } catch {
+                detail = await response.text().catch(() => "");
+            }
+            throw new Error(`${response.status} ${detail || response.statusText}`);
         }
 
         const result = await response.json();
         return cleanSvgResponse(result.choices?.[0]?.message?.content);
     } catch (error: any) {
-        console.error("OpenRouter Error:", error);
-        throw new Error(error.message || "Failed to contact OpenRouter.");
+        console.error("OpenAI-compat request failed:", error);
+        throw new Error(error.message || "请求失败，请检查网络和接口配置。");
     }
 };
 
@@ -97,8 +128,8 @@ export const generateSvgFromPrompt = async (options: GenerationOptions): Promise
   const fullPrompt = `Create an ${options.animated ? 'ANIMATED' : ''} SVG representation of: "${options.prompt}". \nStyle: ${options.style}.\nViewpoint: ${options.viewpoint}.\nMood: ${options.mood}.\nColor Theme: ${options.theme} (Base: ${options.color}).\nStroke Style: ${options.stroke}.\nAspect Ratio: ${options.ratio}.\nComplexity: ${options.complexity}.\nNegative Prompt: ${options.negativePrompt}`;
 
   // Route based on provider
-  if (modelConfig.provider === 'openrouter') {
-      return generateOpenRouterSvg([
+  if (modelConfig.provider !== 'google') {
+      return generateOpenAICompatSvg([
           { role: 'system', content: systemPrompt },
           { role: 'user', content: fullPrompt }
       ], modelConfig);
@@ -152,9 +183,9 @@ export const generateSvgFromImage = async (options: GenerationOptions): Promise<
   const userPromptText = `Convert this image to SVG. ${prompt ? `Additional instructions: ${prompt}` : ''} \nStyle: ${options.style}.\nViewpoint: ${options.viewpoint}.\nMood: ${options.mood}.\nTheme: ${options.theme}.\nComplexity: ${options.complexity}.\nNegative Prompt: ${options.negativePrompt}`;
 
   // OpenRouter Image Handling
-  if (modelConfig.provider === 'openrouter') {
+  if (modelConfig.provider !== 'google') {
       // Ensure the model supports vision (e.g., gpt-4o, gemini-flash, etc.)
-      return generateOpenRouterSvg([
+      return generateOpenAICompatSvg([
           { role: 'system', content: systemPrompt },
           { 
               role: 'user', 
@@ -228,8 +259,8 @@ export const refineSvg = async (
       Return the updated SVG.
   `;
 
-  if (modelConfig.provider === 'openrouter') {
-      return generateOpenRouterSvg([
+  if (modelConfig.provider !== 'google') {
+      return generateOpenAICompatSvg([
           { role: 'system', content: systemPrompt },
           { role: 'user', content: fullPrompt }
       ], modelConfig);
