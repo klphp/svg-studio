@@ -415,7 +415,7 @@ export const InputSection: React.FC<InputSectionProps> = ({
                     <PenTool className="w-3.5 h-3.5 text-white" />
                 </div>
                 <div>
-                    <h1 className="text-sm font-bold text-white leading-none">SVG ORA Studio</h1>
+                    <h1 className="text-sm font-bold text-white leading-none">SVG Studio</h1>
                     <p className="text-[10px] text-zinc-500 font-medium truncate max-w-[100px]">
                         {modelConfig.provider === 'google' ? 'Gemini Native' : 'OpenRouter'}
                     </p>

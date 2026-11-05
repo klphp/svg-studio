@@ -65,7 +65,7 @@ const generateOpenRouterSvg = async (
             headers: {
                 "Authorization": `Bearer ${config.apiKey}`,
                 "HTTP-Referer": window.location.origin,
-                "X-Title": "SVG ORA Studio",
+                "X-Title": "SVG Studio",
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
