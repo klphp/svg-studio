@@ -5,7 +5,7 @@
 */
 
 import React, { useState, useRef } from 'react';
-import { Wand2, Sparkles, Upload, PlayCircle, History, PenTool, ChevronDown, Ban, X, Zap, Box, Settings2, MessageSquarePlus, Globe, Key, Check } from 'lucide-react';
+import { Wand2, Sparkles, Upload, PlayCircle, History, PenTool, Shapes, ChevronDown, Ban, X, Zap, Box, Settings2, MessageSquarePlus, Globe, Key, Check } from 'lucide-react';
 
 /**
  * 当前是不是 macOS。
@@ -455,8 +455,13 @@ export const InputSection: React.FC<InputSectionProps> = ({
             }}
         >
              <div className="flex items-center gap-3">
-                <div className="w-7 h-7 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center shadow-lg shadow-indigo-500/20">
-                    <PenTool className="w-3.5 h-3.5 text-white" />
+                {/* 应用标识。原来用的是 PenTool（笔尖）+ indigo→purple 渐变，
+                    和上游 SVG-ORA-Studio 的视觉识别一样 —— 既然协议核查时决定
+                    不沿用人家的产品形象，图形和配色就都换掉，和应用图标保持一致：
+                    几何图形 + cyan→blue。lucide 图标本身是 ISC 开源、随便用，
+                    要避的是「笔尖 + 紫渐变」这个组合。 */}
+                <div className="w-7 h-7 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-lg flex items-center justify-center shadow-lg shadow-cyan-500/20">
+                    <Shapes className="w-3.5 h-3.5 text-white" />
                 </div>
                 <div>
                     <h1 className="text-sm font-bold text-white leading-none">SVG Studio</h1>
